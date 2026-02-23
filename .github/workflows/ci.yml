@@ -7,12 +7,68 @@ on:
     branches: [main, develop]
 
 jobs:
-  # ── Java Services (MS1, MS2, MS3, MS5) ──
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      java-matrix: ${{ steps.set-matrix.outputs.java-matrix }}
+      has-java: ${{ steps.set-matrix.outputs.has-java }}
+      python-matrix: ${{ steps.set-matrix.outputs.python-matrix }}
+      has-python: ${{ steps.set-matrix.outputs.has-python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          # Java Services (having src/test/java and pom.xml)
+          java_services=()
+          for d in */src/test/java; do
+            if [ -d "$d" ]; then
+              svc=$(echo "$d" | cut -d'/' -f1)
+              if [ -f "$svc/pom.xml" ]; then
+                java_services+=("\"$svc\"")
+              fi
+            fi
+          done
+          # Remove duplicates just in case
+          java_services=($(echo "${java_services[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+          
+          if [ ${#java_services[@]} -eq 0 ]; then
+            echo "java-matrix=[\"dummy\"]" >> $GITHUB_OUTPUT
+            echo "has-java=false" >> $GITHUB_OUTPUT
+          else
+            json_array="[$(IFS=,; echo "${java_services[*]}")]"
+            echo "java-matrix=$json_array" >> $GITHUB_OUTPUT
+            echo "has-java=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Python Services (having tests/ and requirements.txt)
+          python_services=()
+          for d in */tests; do
+            if [ -d "$d" ]; then
+              svc=$(echo "$d" | cut -d'/' -f1)
+              if [ -f "$svc/requirements.txt" ]; then
+                python_services+=("\"$svc\"")
+              fi
+            fi
+          done
+          python_services=($(echo "${python_services[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+          
+          if [ ${#python_services[@]} -eq 0 ]; then
+            echo "python-matrix=[\"dummy\"]" >> $GITHUB_OUTPUT
+            echo "has-python=false" >> $GITHUB_OUTPUT
+          else
+            json_array="[$(IFS=,; echo "${python_services[*]}")]"
+            echo "python-matrix=$json_array" >> $GITHUB_OUTPUT
+            echo "has-python=true" >> $GITHUB_OUTPUT
+          fi
+
   build-java:
+    needs: discover
+    if: needs.discover.outputs.has-java == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [auth-service, rh-service, project-service, dashboard-service]
+        service: ${{ fromJson(needs.discover.outputs.java-matrix) }}
     defaults:
       run:
         working-directory: ${{ matrix.service }}
@@ -43,12 +99,17 @@ jobs:
           name: test-report-${{ matrix.service }}
           path: ${{ matrix.service }}/target/surefire-reports/
 
-  # ── Python AI Service (MS4) ──
   build-python:
+    needs: discover
+    if: needs.discover.outputs.has-python == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.discover.outputs.python-matrix) }}
     defaults:
       run:
-        working-directory: ai-service
+        working-directory: ${{ matrix.service }}
     services:
       postgres:
         image: postgres:15
@@ -57,24 +118,38 @@ jobs:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
         ports: ['5432:5432']
+        options: --health-cmd pg_isready
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install deps
-        run: pip install -r requirements.txt -r requirements-test.txt
+        run: pip install -r requirements.txt
+      - name: Install test deps
+        id: custom_tests
+        run: |
+          if [ -f requirements-test.txt ]; then
+            pip install -r requirements-test.txt
+          fi
       - name: Run Tests
-        run: pytest tests/ -v --cov=app --cov-report=xml
+        run: pytest tests/ -v --cov=app --cov-report=xml || pytest tests/ -v
       - name: Upload Coverage
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ai-coverage
-          path: ai-service/coverage.xml
+          name: coverage-${{ matrix.service }}
+          path: ${{ matrix.service }}/coverage.xml
 
-  # ── Gate: Block merge if any test fails ──
   gate:
+    if: always()
     needs: [build-java, build-python]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "✅ All tests passed. Merge is allowed."
+      - name: Check conditions
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" == "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+            echo "❌ Some tests failed or were cancelled."
+            exit 1
+          fi
+          echo "✅ All tests passed. Merge is allowed."

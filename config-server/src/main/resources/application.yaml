@@ -8,7 +8,7 @@ spring:
     config:
       server:
         git:
-          uri: file:///C:/Users/byoud/OneDrive/Desktop/PFE/flow-studio-erp/config-repo
+          uri: file://${user.dir}/../config-repo
           default-label: main
 
 eureka:

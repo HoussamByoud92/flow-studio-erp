@@ -11,7 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 		"eureka.client.register-with-eureka=false",
-		"eureka.client.fetch-registry=false"
+		"eureka.client.fetch-registry=false",
+		"spring.profiles.active=test,native"
 })
 class ConfigServerApplicationTests {
 

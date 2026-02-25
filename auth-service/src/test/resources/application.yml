@@ -7,9 +7,9 @@ spring:
   config:
     import: ""
   datasource:
-    url: jdbc:postgresql://localhost:5432/auth_db_test
-    username: postgres
-    password: 123456
+    url: jdbc:postgresql://localhost:5432/test_db
+    username: test
+    password: test
   jpa:
     hibernate:
       ddl-auto: update

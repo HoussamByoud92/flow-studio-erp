@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -40,8 +41,16 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
-        return ResponseEntity.ok(authService.authenticateUser(loginRequest));
+    public ResponseEntity<?> authenticateUser(@Valid @RequestBody LoginRequest loginRequest) {
+        try {
+            return ResponseEntity.ok(authService.authenticateUser(loginRequest));
+        } catch (org.springframework.security.core.AuthenticationException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "error", "Unauthorized",
+                "message", "Invalid email or password",
+                "status", 401
+            ));
+        }
     }
 
     @PostMapping("/refresh")

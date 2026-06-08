@@ -2,7 +2,6 @@ package com.flowstudio.api_gateway.filter;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -65,9 +64,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                         .getBody();
 
                 // Add extracted claims to headers for downstream microservices
+                @SuppressWarnings("unchecked")
+                List<String> roles = ((List<?>) claims.get("roles")).stream()
+                        .map(Object::toString).toList();
+                String userId = claims.get("id", String.class);
                 ServerHttpRequest modifiedRequest = exchange.getRequest().mutate()
-                        .header("X-User-ID", claims.getSubject())
-                        .header("X-User-Roles", String.valueOf(claims.get("roles")))
+                        .header("X-User-ID", userId != null ? userId : claims.getSubject())
+                        .header("X-User-Roles", String.join(",", roles))
                         .build();
 
                 return chain.filter(exchange.mutate().request(modifiedRequest).build());
@@ -88,8 +91,7 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     }
 
     private Key getSigningKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
-        return Keys.hmacShaKeyFor(keyBytes);
+        return Keys.hmacShaKeyFor(jwtSecret.getBytes());
     }
 
     @Override

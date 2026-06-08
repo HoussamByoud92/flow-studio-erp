@@ -1,9 +1,15 @@
 package com.flowstudio.auth_service.config;
 
 import com.flowstudio.auth_service.entity.Role;
+import com.flowstudio.auth_service.entity.User;
 import com.flowstudio.auth_service.repository.RoleRepository;
+import com.flowstudio.auth_service.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +23,8 @@ import java.util.List;
 public class DataSeeder {
 
     private final RoleRepository roleRepository;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Bean
     public CommandLineRunner initRoles() {
@@ -30,6 +38,20 @@ public class DataSeeder {
                     log.info("Seeded role: {}", roleName);
                 }
             }
+
+            // Seed or update default admin user
+            Role adminRole = roleRepository.findByName("ADMIN").get();
+            User adminUser = userRepository.findByEmail("admin@flowstudio.ma").orElseGet(() -> 
+                User.builder()
+                    .username("admin")
+                    .email("admin@flowstudio.ma")
+                    .enabled(true)
+                    .roles(java.util.Set.of(adminRole))
+                    .build()
+            );
+            adminUser.setPasswordHash(passwordEncoder.encode("admin123"));
+            userRepository.save(adminUser);
+            log.info("Seeded/Updated default admin user: admin@flowstudio.ma / admin123");
         };
     }
 }

@@ -12,12 +12,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.flowstudio.auth_service.security.JwtProvider;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class RabbitMQPublisher {
 
     private final RabbitTemplate rabbitTemplate;
+    private final JwtProvider jwtProvider;
 
     @Value("${rabbitmq.exchange.name:erp.main.exchange}")
     private String exchangeName;
@@ -35,7 +38,12 @@ public class RabbitMQPublisher {
         payload.put("roles", user.getRoles().stream().map(r -> r.getName()).collect(Collectors.toList()));
         payload.put("createdAt", user.getCreatedAt().toString());
 
-        rabbitTemplate.convertAndSend(exchangeName, userCreatedRoutingKey, payload);
+        String serviceToken = jwtProvider.generateTokenFromEmail("auth-service@flowstudio.ma", "auth-service", java.util.List.of("SYSTEM"));
+
+        rabbitTemplate.convertAndSend(exchangeName, userCreatedRoutingKey, payload, message -> {
+            message.getMessageProperties().setHeader("X-Service-Token", serviceToken);
+            return message;
+        });
         log.info("Event published successfully to exchange: {}, routing key: {}", exchangeName, userCreatedRoutingKey);
     }
 }

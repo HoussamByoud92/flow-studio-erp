@@ -20,6 +20,23 @@ public class RabbitMQConfig {
         return new TopicExchange(exchangeName);
     }
 
+    // --- DLQ Configuration ---
+    @Bean
+    public TopicExchange deadLetterExchange() {
+        return new TopicExchange("erp.dlx");
+    }
+
+    @Bean
+    public org.springframework.amqp.core.Queue deadLetterQueue() {
+        return org.springframework.amqp.core.QueueBuilder.durable("q.dlq").build();
+    }
+
+    @Bean
+    public org.springframework.amqp.core.Binding deadLetterBinding() {
+        return org.springframework.amqp.core.BindingBuilder.bind(deadLetterQueue()).to(deadLetterExchange()).with("#");
+    }
+    // -----------------------
+
     @Bean
     public MessageConverter jsonMessageConverter() {
         return new Jackson2JsonMessageConverter();

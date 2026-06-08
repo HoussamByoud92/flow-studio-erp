@@ -1,6 +1,7 @@
 package com.flowstudio.auth_service.service;
 
 import com.flowstudio.auth_service.entity.RefreshToken;
+import com.flowstudio.auth_service.entity.User;
 import com.flowstudio.auth_service.repository.RefreshTokenRepository;
 import com.flowstudio.auth_service.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,17 +23,22 @@ public class RefreshTokenService {
     @Value("${jwt.refresh-expiration:604800000}")
     private long refreshTokenDurationMs; // 7 days
 
+    @Transactional
     public RefreshToken createRefreshToken(UUID userId) {
-        RefreshToken refreshToken = new RefreshToken();
+        User user = userRepository.findById(userId).orElseThrow(
+                () -> new RuntimeException("User not found with id: " + userId));
 
-        refreshToken.setUser(userRepository.findById(userId).orElseThrow(
-                () -> new RuntimeException("User not found with id: " + userId)));
+        RefreshToken refreshToken = refreshTokenRepository.findByUser(user)
+                .orElse(new RefreshToken());
+
+        if (refreshToken.getUser() == null) {
+            refreshToken.setUser(user);
+        }
 
         refreshToken.setExpiryDate(Instant.now().plusMillis(refreshTokenDurationMs));
         refreshToken.setToken(UUID.randomUUID().toString());
 
-        refreshToken = refreshTokenRepository.save(refreshToken);
-        return refreshToken;
+        return refreshTokenRepository.save(refreshToken);
     }
 
     public Optional<RefreshToken> findByToken(String token) {

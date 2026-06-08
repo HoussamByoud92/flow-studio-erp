@@ -14,11 +14,12 @@ jobs:
       has-java: ${{ steps.set-matrix.outputs.has-java }}
       python-matrix: ${{ steps.set-matrix.outputs.python-matrix }}
       has-python: ${{ steps.set-matrix.outputs.has-python }}
+      has-frontend: ${{ steps.set-matrix.outputs.has-frontend }}
     steps:
       - uses: actions/checkout@v4
       - id: set-matrix
         run: |
-          # Java Services (having src/test/java and pom.xml)
+          # ── Java services (need src/test/java + pom.xml) ──
           java_services=()
           for d in */src/test/java; do
             if [ -d "$d" ]; then
@@ -28,9 +29,8 @@ jobs:
               fi
             fi
           done
-          # Remove duplicates just in case
           java_services=($(echo "${java_services[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
-          
+
           if [ ${#java_services[@]} -eq 0 ]; then
             echo "java-matrix=[\"dummy\"]" >> $GITHUB_OUTPUT
             echo "has-java=false" >> $GITHUB_OUTPUT
@@ -38,9 +38,10 @@ jobs:
             json_array="[$(IFS=,; echo "${java_services[*]}")]"
             echo "java-matrix=$json_array" >> $GITHUB_OUTPUT
             echo "has-java=true" >> $GITHUB_OUTPUT
+            echo "Found Java services: ${java_services[*]}"
           fi
-          
-          # Python Services (having tests/ and requirements.txt)
+
+          # ── Python services (need tests/ + requirements.txt) ──
           python_services=()
           for d in */tests; do
             if [ -d "$d" ]; then
@@ -51,7 +52,7 @@ jobs:
             fi
           done
           python_services=($(echo "${python_services[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
-          
+
           if [ ${#python_services[@]} -eq 0 ]; then
             echo "python-matrix=[\"dummy\"]" >> $GITHUB_OUTPUT
             echo "has-python=false" >> $GITHUB_OUTPUT
@@ -59,8 +60,20 @@ jobs:
             json_array="[$(IFS=,; echo "${python_services[*]}")]"
             echo "python-matrix=$json_array" >> $GITHUB_OUTPUT
             echo "has-python=true" >> $GITHUB_OUTPUT
+            echo "Found Python services: ${python_services[*]}"
           fi
 
+          # ── Frontend (Angular) ──
+          if [ -f "frontend/package.json" ]; then
+            echo "has-frontend=true" >> $GITHUB_OUTPUT
+            echo "Frontend detected"
+          else
+            echo "has-frontend=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ─────────────────────────────────────────────────────────────
+  # Java microservices — Spring Boot
+  # ─────────────────────────────────────────────────────────────
   build-java:
     needs: discover
     if: needs.discover.outputs.has-java == 'true'
@@ -80,18 +93,30 @@ jobs:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
         ports: ['5432:5432']
-        options: --health-cmd pg_isready
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       rabbitmq:
         image: rabbitmq:3-management
         ports: ['5672:5672']
+        options: >-
+          --health-cmd "rabbitmq-diagnostics ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'maven'
+      - name: Make mvnw executable
+        run: chmod +x mvnw
       - name: Build & Test
-        run: mvn clean verify -Dspring.profiles.active=test
+        run: ./mvnw clean verify -Dspring.profiles.active=test --no-transfer-progress
       - name: Upload Test Report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -99,6 +124,9 @@ jobs:
           name: test-report-${{ matrix.service }}
           path: ${{ matrix.service }}/target/surefire-reports/
 
+  # ─────────────────────────────────────────────────────────────
+  # Python AI service — FastAPI + pytest
+  # ─────────────────────────────────────────────────────────────
   build-python:
     needs: discover
     if: needs.discover.outputs.has-python == 'true'
@@ -124,16 +152,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install deps
+          cache: 'pip'
+      - name: Install runtime deps
         run: pip install -r requirements.txt
       - name: Install test deps
-        id: custom_tests
         run: |
           if [ -f requirements-test.txt ]; then
             pip install -r requirements-test.txt
+          else
+            pip install pytest pytest-cov httpx
           fi
       - name: Run Tests
-        run: pytest tests/ -v --cov=app --cov-report=xml || pytest tests/ -v
+        run: pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing
       - name: Upload Coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -141,15 +171,51 @@ jobs:
           name: coverage-${{ matrix.service }}
           path: ${{ matrix.service }}/coverage.xml
 
+  # ─────────────────────────────────────────────────────────────
+  # Angular frontend — build + Karma/Jasmine unit tests
+  # ─────────────────────────────────────────────────────────────
+  build-frontend:
+    needs: discover
+    if: needs.discover.outputs.has-frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci || npm install
+      - name: Run unit tests (headless Chrome)
+        run: npm run test:ci
+      - name: Build production bundle
+        run: npm run build
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+
+  # ─────────────────────────────────────────────────────────────
+  # Gate — fails if ANY job failed or was cancelled
+  # ─────────────────────────────────────────────────────────────
   gate:
     if: always()
-    needs: [build-java, build-python]
+    needs: [build-java, build-python, build-frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Check conditions
         run: |
           if [ "${{ contains(needs.*.result, 'failure') }}" == "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]; then
             echo "❌ Some tests failed or were cancelled."
+            echo "Java   : ${{ needs.build-java.result }}"
+            echo "Python : ${{ needs.build-python.result }}"
+            echo "Front  : ${{ needs.build-frontend.result }}"
             exit 1
           fi
           echo "✅ All tests passed. Merge is allowed."
